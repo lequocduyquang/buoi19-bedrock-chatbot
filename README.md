@@ -2,10 +2,7 @@
 
 Chatbot hỏi đáp về sức khoẻ tinh thần, dùng để so sánh với chatbot LSTM mà học viên tự train trong Buổi 19. App gọi mô hình ngôn ngữ Amazon Nova Lite thông qua Amazon Bedrock (dịch vụ AWS cho phép gọi LLM qua API), dùng hàm Converse API.
 
-| File | Dùng để |
-|---|---|
-| `app_todo.py` | Bài hands-on: học viên điền 6 TODO |
-| `app.py` | Đáp án hoàn chỉnh |
+Bài hands-on nằm trong `app_todo.py`: điền lần lượt 6 TODO để chatbot chạy được.
 
 ## Chạy
 
@@ -13,7 +10,7 @@ Chatbot hỏi đáp về sức khoẻ tinh thần, dùng để so sánh với ch
 pip install -r requirements.txt
 export AWS_ACCESS_KEY_ID=...        # key lớp do giảng viên phát
 export AWS_SECRET_ACCESS_KEY=...
-python app_todo.py                  # hoặc python app.py
+python app_todo.py
 ```
 
 Trên Windows (PowerShell), đặt key bằng:

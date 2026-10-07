@@ -4,7 +4,7 @@ Làm lần lượt TODO 1 → TODO 6. Mỗi TODO chỉ cần 1–3 dòng code.
 Cài thư viện:  pip install -r requirements.txt
 Đặt key AWS:   export AWS_ACCESS_KEY_ID=...  và  export AWS_SECRET_ACCESS_KEY=...
 Chạy thử:      python app_todo.py   rồi mở http://127.0.0.1:7860
-Bí quá thì xem đáp án trong app.py.
+Bí quá thì hỏi giảng viên hoặc print() từng biến ra để xem.
 """
 import boto3
 import gradio as gr
