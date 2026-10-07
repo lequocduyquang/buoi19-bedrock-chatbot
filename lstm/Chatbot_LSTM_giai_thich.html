@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chatbot LSTM Walkthrough</title>
+<style>
+  :root {
+    --bg: #fbfaf7; --fg: #1f2328; --muted: #5d6470; --line: #e3e0d8;
+    --card: #ffffff; --code-bg: #f3f1ec; --accent: #2f5d8a; --warn: #9a4b14; --warn-bg: #fdf3e8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #16181c; --fg: #e6e6e3; --muted: #9aa0a8; --line: #2c3036;
+      --card: #1d2025; --code-bg: #23272d; --accent: #8fb4dc; --warn: #f0b27a; --warn-bg: #2b2219;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #16181c; --fg: #e6e6e3; --muted: #9aa0a8; --line: #2c3036;
+    --card: #1d2025; --code-bg: #23272d; --accent: #8fb4dc; --warn: #f0b27a; --warn-bg: #2b2219;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 16px/1.65 "Source Serif 4", Georgia, "Times New Roman", serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 40px 16px 80px; }
+  h1, h2, h3 { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; line-height: 1.3; }
+  h1 { font-size: 1.9rem; margin: 0 0 4px; }
+  h2 { font-size: 1.35rem; margin: 48px 0 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+  h3 { font-size: 1.08rem; margin: 28px 0 8px; color: var(--accent); }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  nav { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px 20px; margin-bottom: 24px;
+        font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; font-size: .92rem; }
+  nav ol { margin: 4px 0; padding-left: 20px; }
+  a { color: var(--accent); }
+  code { font-family: "JetBrains Mono", Menlo, Consolas, monospace; font-size: .86em; background: var(--code-bg);
+         padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px;
+        overflow-x: auto; font-size: .84rem; line-height: 1.5; }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .table-wrap { overflow-x: auto; margin: 12px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: .92rem; background: var(--card); }
+  th, td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--code-bg); font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; font-weight: 600; }
+  .note { border-left: 3px solid var(--warn); background: var(--warn-bg); padding: 10px 14px; border-radius: 0 6px 6px 0; margin: 14px 0; }
+  .note strong:first-child { color: var(--warn); }
+  ul, ol { padding-left: 22px; }
+  li { margin: 3px 0; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Chatbot Seq2Seq LSTM: giải thích từng bước</h1>
+<p class="sub">Buổi 19, notebook <code>Chatbot_using_LSTM_pytorch.ipynb</code></p>
+
+<nav>
+  <strong>Mục lục</strong>
+  <ol>
+    <li><a href="#overview">Tổng quan</a></li>
+    <li><a href="#p1">Phase 1: Setup (cell 0–4)</a></li>
+    <li><a href="#p2">Phase 2: Load và clean data (cell 5–9)</a></li>
+    <li><a href="#p3">Phase 3: Tokenize và xây vocab (cell 11–15)</a></li>
+    <li><a href="#p4">Phase 4: Vectorize thành tensor (cell 17)</a></li>
+    <li><a href="#p5">Phase 5: Model và Training (cell 21–26)</a></li>
+    <li><a href="#p6">Phase 6: Inference và Chatbot (cell 29–34)</a></li>
+    <li><a href="#review">Nhận xét tổng thể</a></li>
+  </ol>
+</nav>
+
+<h2 id="overview">Tổng quan</h2>
+<p>Notebook train một <strong>Seq2Seq Encoder–Decoder bằng LSTM</strong>, ở mức từ (word-level) và dùng <strong>one-hot</strong>, trên một bộ FAQ về sức khỏe tinh thần (<code>mentalhealth.csv</code>, gồm 2 cột <code>Questions</code> và <code>Answers</code>). Model không dùng attention hay embedding. Bản này port gần như 1-1 từ tutorial Keras kinh điển (bài "seq2seq chatbot" của Codecademy/Keras blog) sang PyTorch.</p>
+<pre><code>Question ──tokenize──► one-hot (T_enc × V_enc) ──► Encoder LSTM ──► (h, c)  ← "context vector"
+                                                                     │
+&lt;START&gt; w1 w2 ... ──one-hot (T_dec × V_dec)──► Decoder LSTM ◄────────┘ (init state)
+                                                    │
+                                              Linear(H → V_dec) ──► logits ──► w1 w2 ... &lt;END&gt;</code></pre>
+<p>Pipeline gồm 6 phase: <strong>Load, Clean, Tokenize/Vocab, Vectorize, Train, Inference/Chat</strong>.</p>
+
+<h2 id="p1">Phase 1: Setup (cell 0–4)</h2>
+<p><strong>Cell 0</strong>: <code>drive.mount('/content/drive')</code>. Notebook chạy trên Colab và đọc CSV từ Google Drive.</p>
+<p><strong>Cell 2–3</strong>: <code>pip install</code> các thư viện, sau đó gán <code>path_to_csv</code> trỏ tới file CSV trên Drive. Toàn bộ tokenize làm bằng regex nên notebook không cần nltk.</p>
+<p><strong>Cell 4</strong>: import các thư viện. <code>TensorDataset</code> và <code>DataLoader</code> dùng để chia batch. <code>random</code> chỉ dùng để set seed.</p>
+
+<h2 id="p2">Phase 2: Load và clean data (cell 5–9)</h2>
+<p><strong>Cell 5–6</strong>: <code>pd.read_csv</code> rồi <code>head()</code>. Mỗi row là một cặp (câu hỏi, câu trả lời). Dataset nhỏ, khoảng vài chục đến ~100 cặp.</p>
+<p><strong>Cell 7</strong>: clean <strong>chỉ cột <code>Answers</code></strong>:</p>
+<pre><code>answer = re.sub(r'\n', ' ', answer)   # xuống dòng → space
+answer = re.sub(r'\(', '', answer)    # bỏ (
+answer = re.sub(r'\)', '', answer)    # bỏ )
+answer = re.sub(r',', '', answer)     # bỏ dấu phẩy
+answer = re.sub(r'-', '', answer)     # bỏ gạch ngang
+answer = re.sub(r'/', '', answer)     # bỏ /</code></pre>
+<p>Mục đích là giảm vocab của decoder: ít ký hiệu thì ít class phải dự đoán hơn.</p>
+<div class="note"><strong>Cần để ý:</strong>
+  <ul>
+    <li>Bỏ <code>-</code> làm dính từ: <code>self-esteem</code> thành <code>selfesteem</code>, <code>well-being</code> thành <code>wellbeing</code>. Việc này tạo ra token lạ trong vocab.</li>
+    <li><strong><code>Questions</code> không được clean</strong>. Input và output vì thế đi qua 2 cách xử lý khác nhau, nhưng chấp nhận được vì 2 vocab vốn tách riêng.</li>
+    <li><strong>Không lowercase</strong>. <code>What</code> và <code>what</code> thành 2 token khác nhau. Đây là nguồn bug chính lúc chat (xem Phase 6).</li>
+  </ul>
+</div>
+<p>Code clean cũng viết được gọn hơn bằng một dòng vectorized: <code>data['Answers'].astype(str).str.replace(r'[\n]', ' ', regex=True).str.replace(r'[(),\-/]', '', regex=True)</code>.</p>
+<p><strong>Cell 8</strong>: zip 2 cột thành list <code>pairs = [(q, a), ...]</code>.</p>
+
+<h2 id="p3">Phase 3: Tokenize và xây vocab (cell 11–15)</h2>
+<h3>Regex tokenizer: <code>r"[\w']+|[^\s\w]"</code></h3>
+<p>Regex này match một trong hai kiểu:</p>
+<ul>
+  <li><code>[\w']+</code>: một chuỗi chữ, số, <code>_</code> hoặc dấu nháy đơn, tức là một từ, kể cả từ có nháy như <code>don't</code> hay <code>I'm</code>.</li>
+  <li><code>[^\s\w]</code>: <strong>một</strong> ký tự đơn không phải khoảng trắng và không phải chữ, tức là dấu câu như <code>?</code>, <code>.</code> hay <code>!</code>.</li>
+</ul>
+<p>Ví dụ: <code>"What's depression?"</code> cho ra <code>["What's", "depression", "?"]</code>.</p>
+
+<h3>Xử lý target</h3>
+<pre><code>target_doc = " ".join(re.findall(regex, target_doc))   # tách dấu câu ra khỏi từ, nối lại bằng space
+target_doc = '&lt;START&gt; ' + target_doc + ' &lt;END&gt;'</code></pre>
+<ul>
+  <li>Tách dấu câu xong rồi nối bằng space để về sau chỉ cần <code>.split()</code> là có token.</li>
+  <li><code>&lt;START&gt;</code> và <code>&lt;END&gt;</code> là 2 token đặc biệt:
+    <ul>
+      <li><code>&lt;START&gt;</code> là tín hiệu "bắt đầu sinh" cho decoder.</li>
+      <li><code>&lt;END&gt;</code> là tín hiệu "dừng". Không có token này thì lúc inference model không biết khi nào nên dừng.</li>
+    </ul>
+  </li>
+</ul>
+
+<h3>Vocab</h3>
+<ul>
+  <li><code>input_tokens</code>: tập token của câu hỏi. Dùng <code>set</code> để khử trùng rồi <code>sorted</code> để thứ tự cố định (deterministic).</li>
+  <li><code>target_tokens</code>: tập token của câu trả lời, bao gồm <code>&lt;START&gt;</code> và <code>&lt;END&gt;</code>.</li>
+  <li><code>num_encoder_tokens = V_enc</code> và <code>num_decoder_tokens = V_dec</code> là kích thước vocab. Vì dùng one-hot, đây cũng chính là <strong>chiều input</strong> của LSTM.</li>
+</ul>
+<p>Có 2 vocab riêng vì input và output là 2 "ngôn ngữ" khác nhau: câu hỏi ngắn, còn câu trả lời dài và nhiều từ chuyên môn. Cách làm này lấy từ bài toán dịch máy (seq2seq gốc là để dịch EN sang FR).</p>
+<p>Dòng <code>if token not in input_tokens: input_tokens.add(token)</code> thừa, vì <code>set.add</code> vốn đã idempotent.</p>
+
+<h3>Cell 14: tạo 3 dict</h3>
+<pre><code>input_features_dict          # token → index   (encode câu hỏi)
+target_features_dict         # token → index   (encode câu trả lời)
+reverse_target_features_dict # index → token   ← dùng lúc inference: argmax → chữ</code></pre>
+<p>Không cần dict ngược cho input, vì model không bao giờ phải đổi index của câu hỏi ngược lại thành chữ.</p>
+
+<h2 id="p4">Phase 4: Vectorize thành tensor (cell 17), phần quan trọng nhất</h2>
+<h3>Độ dài max</h3>
+<pre><code>max_encoder_seq_length = max(len(tokenize(q)) for q in input_docs)
+max_decoder_seq_length = max(len(re.findall(regex, t)) for t in target_docs)</code></pre>
+<div class="note"><strong>Bug nhỏ:</strong> regex tách <code>&lt;START&gt;</code> thành 3 token <code>&lt;</code>, <code>START</code>, <code>&gt;</code>, và <code>&lt;END&gt;</code> cũng vậy. Kết quả là <code>max_decoder_seq_length</code> bị <strong>dư 4</strong> so với <code>len(target_doc.split())</code>. Bug này vô hại (chỉ thêm padding) nhưng không nhất quán. Nên dùng <code>len(t.split())</code>.</div>
+
+<h3>3 tensor</h3>
+<div class="table-wrap"><table>
+  <tr><th>Tensor</th><th>Shape</th><th>Kiểu</th><th>Nội dung</th></tr>
+  <tr><td><code>encoder_input_data</code></td><td><code>(N, T_enc, V_enc)</code></td><td>float32</td><td>one-hot câu hỏi</td></tr>
+  <tr><td><code>decoder_input_data</code></td><td><code>(N, T_dec, V_dec)</code></td><td>float32</td><td>one-hot <code>&lt;START&gt; w1 w2 … wn &lt;END&gt;</code></td></tr>
+  <tr><td><code>decoder_target_data</code></td><td><code>(N, T_dec)</code></td><td>int64</td><td><strong>index</strong> của token kế tiếp, padding là <code>-100</code></td></tr>
+</table></div>
+<p>Mỗi dòng của tensor là một câu, mỗi cột là một timestep, và chiều cuối là vector one-hot dài bằng vocab, chỉ có một vị trí bằng 1 còn lại bằng 0.</p>
+
+<h3>Teacher forcing và việc lệch 1 bước (shift)</h3>
+<pre><code>for timestep, token in enumerate(target_doc.split()):
+    decoder_input_data[line, timestep, idx(token)] = 1.
+    if timestep &gt; 0:
+        decoder_target_data[line, timestep - 1] = idx(token)</code></pre>
+<p>Ví dụ target là <code>&lt;START&gt; Mental health is ... &lt;END&gt;</code>:</p>
+<div class="table-wrap"><table>
+  <tr><th>timestep t</th><th>0</th><th>1</th><th>2</th><th>3</th><th>…</th><th>n</th></tr>
+  <tr><td>decoder <strong>input</strong></td><td><code>&lt;START&gt;</code></td><td>Mental</td><td>health</td><td>is</td><td>…</td><td><code>&lt;END&gt;</code></td></tr>
+  <tr><td>decoder <strong>target</strong></td><td>Mental</td><td>health</td><td>is</td><td>…</td><td><code>&lt;END&gt;</code></td><td>-100</td></tr>
+</table></div>
+<p>Ở bước t, decoder nhận <strong>token đúng</strong> của bước t và phải đoán token ở bước t+1. Kỹ thuật này gọi là <strong>teacher forcing</strong>: lúc train luôn đưa đáp án thật vào làm input thay vì dùng token model tự đoán. Lợi ích là train nhanh và ổn định, vì tất cả timestep được tính song song trong một lần forward.</p>
+
+<h3>Vì sao fill <code>-100</code></h3>
+<ul>
+  <li><code>-100</code> là giá trị <code>ignore_index</code> mặc định của <code>nn.CrossEntropyLoss</code>.</li>
+  <li>Các vị trí padding (câu ngắn hơn <code>T_dec</code>) và vị trí sau <code>&lt;END&gt;</code> đều mang <code>-100</code>, nên <strong>không đóng góp vào loss</strong> và cũng không được tính accuracy.</li>
+  <li>Bản Keras gốc dùng one-hot cho target, nên padding là vector 0 và vẫn bị tính vào loss. Bản PyTorch này làm đúng hơn chỗ này.</li>
+</ul>
+
+<h3>Padding của encoder (vấn đề ẩn)</h3>
+<p>Câu hỏi ngắn được pad bằng vector 0 ở <strong>cuối</strong>. LSTM vẫn chạy qua các bước padding đó, nên <code>h_n</code> và <code>c_n</code> cuối cùng bị "pha loãng" bởi các bước rỗng. Có 2 cách làm đúng:</p>
+<ul>
+  <li>Dùng <code>nn.utils.rnn.pack_padded_sequence</code>.</li>
+  <li>Hoặc pad ở <strong>đầu</strong> (pre-padding), để bước thật cuối cùng nằm sát <code>h_n</code>.</li>
+</ul>
+
+<h3>Vấn đề bộ nhớ</h3>
+<p>One-hot 3D rất tốn RAM. Giả sử N=100, T_dec=600 và V_dec=3000, thì riêng <code>decoder_input_data</code> đã là 100 × 600 × 3000 × 4 byte ≈ <strong>720 MB</strong>. Dùng <code>nn.Embedding</code> với input là index (int) thì chỉ tốn N × T × 8 byte, tức vài trăm KB.</p>
+
+<h2 id="p5">Phase 5: Model và Training (cell 21–26)</h2>
+<h3>Hyperparams (cell 21)</h3>
+<ul>
+  <li><code>dimensionality = 256</code> là hidden size H của LSTM, và cũng là kích thước "context vector".</li>
+  <li><code>batch_size = 10</code> và <code>epochs = 1000</code>. Với dataset nhỏ thì cần nhiều epoch để model <em>thuộc lòng</em> dữ liệu.</li>
+  <li>Code seed cả <code>torch</code>, <code>numpy</code> và <code>random</code> để kết quả tái lập được (reproducible). Lưu ý seed CPU không đảm bảo kết quả GPU deterministic 100%.</li>
+</ul>
+
+<h3>Class <code>Seq2SeqLSTM</code></h3>
+<pre><code>self.encoder_lstm  = nn.LSTM(V_enc, H, batch_first=True)
+self.decoder_lstm  = nn.LSTM(V_dec, H, batch_first=True)
+self.decoder_dense = nn.Linear(H, V_dec)</code></pre>
+<p><code>batch_first=True</code> nghĩa là input có shape <code>(B, T, features)</code>, khớp với cách tạo tensor ở Phase 4.</p>
+<p><strong>Nhắc lại LSTM (một timestep):</strong></p>
+<pre><code>f_t = σ(W_f·[h_{t-1}, x_t] + b_f)     forget gate  — quên bao nhiêu từ c cũ
+i_t = σ(W_i·[h_{t-1}, x_t] + b_i)     input gate   — nạp bao nhiêu thông tin mới
+g_t = tanh(W_g·[h_{t-1}, x_t] + b_g)  candidate
+o_t = σ(W_o·[h_{t-1}, x_t] + b_o)     output gate
+c_t = f_t ⊙ c_{t-1} + i_t ⊙ g_t       cell state  — "băng chuyền" giữ trí nhớ dài
+h_t = o_t ⊙ tanh(c_t)                 hidden state — output tại bước t</code></pre>
+<p>Nhờ cell state <code>c_t</code> được cộng (không phải nhân lặp lại như ở vanilla RNN), gradient ít bị vanishing hơn.</p>
+
+<p><strong><code>forward</code> (dùng lúc train):</strong></p>
+<pre><code>_, (h, c) = self.encoder_lstm(encoder_inputs)                    # h, c: (1, B, H)
+decoder_outputs, _ = self.decoder_lstm(decoder_inputs, (h, c))   # (B, T_dec, H)
+return self.decoder_dense(decoder_outputs)                       # (B, T_dec, V_dec) — logits</code></pre>
+<ul>
+  <li>Encoder <strong>bỏ output từng bước</strong> (<code>_</code>) và chỉ giữ state cuối <code>(h, c)</code>. Toàn bộ ý nghĩa câu hỏi bị nén vào 2 vector 256 chiều. Đó là <strong>bottleneck</strong> của seq2seq khi không có attention.</li>
+  <li>Decoder <strong>khởi tạo state bằng <code>(h, c)</code> của encoder</strong>. Đây là cầu nối duy nhất giữa câu hỏi và câu trả lời.</li>
+  <li><code>Linear</code> trả về <strong>logits</strong> (chưa qua softmax), vì <code>CrossEntropyLoss</code> đã gộp sẵn <code>log_softmax</code> và <code>NLLLoss</code>. Nếu tự thêm softmax vào thì sai.</li>
+</ul>
+<p><strong><code>encode</code> và <code>decode_step</code></strong> là 2 hàm tách riêng để dùng lúc inference. Inference không có toàn bộ câu trả lời trong tay, nên phải sinh từng token một (xem Phase 6).</p>
+<p><strong>Số tham số</strong> (PyTorch LSTM có 2 bias, <code>b_ih</code> và <code>b_hh</code>):</p>
+<ul>
+  <li>Encoder: <code>4·H·(V_enc + H) + 8H</code></li>
+  <li>Decoder: <code>4·H·(V_dec + H) + 8H</code></li>
+  <li>Dense: <code>H·V_dec + V_dec</code></li>
+</ul>
+<p>Phần lớn tham số nằm ở <code>4·H·V</code>: vocab càng to thì model càng phình. Đây là lý do nữa để dùng Embedding.</p>
+
+<h3><code>token_accuracy</code></h3>
+<pre><code>predictions = logits.argmax(-1)          # (B, T)
+valid_mask  = targets != -100            # chỉ tính vị trí thật
+correct     = (predictions == targets) &amp; valid_mask
+return correct.sum() / valid_mask.sum()</code></pre>
+<p>Đây là accuracy <strong>ở mức token và có teacher forcing</strong>. Nó <strong>không</strong> phản ánh chất lượng câu sinh ra khi chat thật (xem phần "exposure bias" ở Phase 6).</p>
+
+<h3>Split và DataLoader (cell 22)</h3>
+<ul>
+  <li>Shuffle index, lấy 20% làm validation và phần còn lại để train. Code có xử lý edge case khi dataset có ít hơn 2 mẫu.</li>
+  <li><code>TensorDataset</code> gom 3 tensor lại, mỗi lần lấy ra một bộ <code>(enc, dec_in, dec_tgt)</code>.</li>
+  <li><code>DataLoader(shuffle=True)</code> cho train, <code>shuffle=False</code> cho val.</li>
+  <li>Optimizer là <code>RMSprop(lr=1e-3)</code>, giữ nguyên từ bản Keras. Adam sẽ hội tụ nhanh hơn.</li>
+  <li>Loss là <code>CrossEntropyLoss(ignore_index=-100)</code>.</li>
+</ul>
+<div class="note"><strong>Validation gần như vô nghĩa về mặt tổng quát hoá.</strong> Mỗi câu hỏi trong val có câu trả lời <em>riêng</em> mà model chưa từng thấy, nên model không thể "đoán" ra được. Kỳ vọng <code>val_loss</code> sẽ tăng dần, tức overfit rõ ràng.</div>
+
+<h3>Training loop (cell 25)</h3>
+<pre><code>training_model.train()                       # bật train mode (dropout/BN nếu có)
+optimizer.zero_grad()                        # xoá gradient batch trước (PyTorch cộng dồn grad)
+logits = model(enc, dec_in)                  # (B, T, V)
+loss = criterion(logits.reshape(-1, V),      # (B·T, V)
+                 dec_tgt.reshape(-1))        # (B·T,)
+loss.backward()                              # backprop through time (BPTT)
+optimizer.step()                             # cập nhật trọng số</code></pre>
+<ul>
+  <li>Phải <code>reshape</code>, vì <code>CrossEntropyLoss</code> muốn input dạng <code>(N, C)</code> và target dạng <code>(N,)</code>. Mỗi timestep của mỗi câu được coi là một mẫu phân loại riêng.</li>
+  <li>Phần eval dùng <code>model.eval()</code> và <code>torch.no_grad()</code>: không tính gradient, nên tiết kiệm RAM và chạy nhanh.</li>
+  <li>Code in log ở epoch 1 và cứ mỗi 50 epoch.</li>
+</ul>
+<div class="note"><strong>Còn thiếu:</strong>
+  <ul>
+    <li><strong>Gradient clipping</strong> (<code>clip_grad_norm_</code>). Đây là chuẩn mực khi train RNN với chuỗi dài, vì chuỗi trả lời ở đây có thể dài hàng trăm token.</li>
+    <li><strong>Early stopping hoặc lưu best checkpoint</strong>. Hiện tại code lưu model ở epoch cuối cùng.</li>
+  </ul>
+</div>
+
+<h3>Checkpoint</h3>
+<p><code>torch.save</code> lưu một dict gồm <code>state_dict</code>, các hyperparam và <strong>cả 3 vocab dict</strong>. Cách làm này đúng: vocab là một phần của model, thiếu vocab thì không inference được.</p>
+<h3>Cell 26</h3>
+<p>Vẽ 2 biểu đồ accuracy và loss của train/val. Kỳ vọng thấy train acc tiến gần 1 và val loss hình chữ U, tức overfit.</p>
+
+<h2 id="p6">Phase 6: Inference và Chatbot (cell 29–34)</h2>
+<p><strong>Cell 29–30</strong>: load checkpoint, dựng lại model, <code>load_state_dict</code>, <code>eval()</code>. <code>encoder_model</code> và <code>decoder_model</code> chỉ là wrapper có <code>no_grad</code>, mô phỏng lại cách bản Keras tách 2 model riêng cho inference.</p>
+
+<h3><code>decode_response</code>: greedy decoding (cell 31)</h3>
+<pre><code>1. states = encoder(question)                    # (h, c)
+2. target_seq = one-hot(&lt;START&gt;)                 # shape (1, 1, V_dec)
+3. loop:
+     logits, states = decoder(target_seq, states)   # 1 bước, state được mang sang bước sau
+     idx = argmax(logits)                           # GREEDY: chọn token xác suất cao nhất
+     append token
+     nếu token == &lt;END&gt; hoặc quá dài → dừng
+     target_seq = one-hot(idx)                      # output bước này = input bước sau</code></pre>
+<ul>
+  <li>Khác biệt cốt lõi so với lúc train: input của bước sau là <strong>token model tự đoán</strong>, không phải đáp án thật.</li>
+  <li>Lỗi lan truyền: đoán sai một từ thì các từ sau dễ sai theo. Hiện tượng này gọi là <strong>exposure bias</strong>, và là lý do train acc 99% vẫn có thể sinh ra câu lủng củng.</li>
+  <li>Greedy là cách decoding đơn giản nhất. Các cách tốt hơn gồm beam search, sampling dùng temperature, top-k và top-p.</li>
+  <li>Biến local <code>encoder_tensor</code> trùng tên với biến global ở cell 22. Vô hại nhưng dễ gây nhầm.</li>
+</ul>
+
+<h3>Class <code>ChatBot</code> (cell 32)</h3>
+<p><strong><code>string_to_matrix</code></strong>: tokenize input của user bằng đúng regex lúc train, rồi tạo one-hot.</p>
+<ul>
+  <li>Token không có trong vocab (OOV) <strong>bị bỏ qua lặng lẽ</strong>, nhưng <code>timestep</code> vẫn tăng, nên câu bị để lại các "lỗ hổng" vector 0 ở giữa.</li>
+  <li>Vì không lowercase, user gõ <code>what is depression?</code> thì <code>what</code> bị coi là OOV (vocab chỉ có <code>What</code>). Encoder chỉ nhận được một phần câu, nên câu trả lời dễ sai.</li>
+  <li><code>timestep &lt; max_encoder_seq_length</code> cắt bớt câu quá dài. Chỗ này đúng.</li>
+</ul>
+<p><strong><code>generate_response</code></strong>: gọi <code>decode_response</code>, sau đó xoá <code>&lt;START&gt;</code> và <code>&lt;END&gt;</code> khỏi chuỗi.</p>
+<div class="note"><strong><code>make_exit</code> có bug thật:</strong> code dùng <code>if exit_command in reply</code>, tức là <strong>check substring</strong>.
+  <ul>
+    <li><code>"I can't stop crying"</code> chứa <code>stop</code>, nên bot thoát.</li>
+    <li><code>"I feel worse later at night"</code> chứa <code>later</code>, nên bot thoát.</li>
+  </ul>
+  Với chatbot về <strong>sức khỏe tinh thần</strong>, thoát hội thoại đúng lúc user đang mô tả vấn đề là lỗi UX nghiêm trọng. Nên sửa thành so khớp nguyên từ: <code>set(reply.lower().split()) &amp; set(self.exit_commands)</code>.
+</div>
+<p><code>negative_responses</code> thì ngược lại: so khớp <strong>chính xác</strong> cả chuỗi, nên <code>"No"</code> viết hoa không khớp.</p>
+<p><strong>Cell 34</strong>: <code>start_chat()</code> dùng <code>input()</code> để chat trong Colab.</p>
+
+<h2 id="review">Nhận xét tổng thể (góc nhìn Tech Lead)</h2>
+<p><strong>Bản chất model:</strong> với khoảng 100 cặp Q&amp;A và mỗi câu hỏi chỉ có một câu trả lời, model thực chất đang <strong>học thuộc một lookup table bằng mạng neural</strong>. Nó chỉ trả lời tốt khi câu hỏi gần như trùng khớp từng chữ với data train. Gõ khác đi một chút (chữ thường, đồng nghĩa, sai chính tả) là ra câu trả lời của câu hỏi khác, hoặc ra chuỗi lặp vô nghĩa.</p>
+<p><strong>Giá trị sư phạm:</strong> notebook này rất tốt để dạy, vì nó cho thấy rõ:</p>
+<ol>
+  <li>Tokenize, xây vocab, dùng special token.</li>
+  <li>Teacher forcing, shift 1 bước, <code>ignore_index</code>.</li>
+  <li>Encoder state làm context, decoder khởi tạo từ state đó.</li>
+  <li>Khác biệt giữa train và inference: chạy song song so với tự hồi quy (autoregressive), và exposure bias.</li>
+  <li>Giới hạn của bottleneck, dẫn tới Attention, rồi tới Transformer.</li>
+</ol>
+
+<h3>Nâng cấp theo thứ tự ROI (lợi ích so với công sức)</h3>
+<div class="table-wrap"><table>
+  <tr><th>#</th><th>Thay đổi</th><th>Lý do</th></tr>
+  <tr><td>1</td><td><code>.lower()</code> cả lúc train lẫn lúc chat</td><td>Sửa OOV vô lý, rẻ nhất</td></tr>
+  <tr><td>2</td><td>Sửa <code>make_exit</code> thành so khớp nguyên từ</td><td>Bug UX nghiêm trọng với domain mental health</td></tr>
+  <tr><td>3</td><td>Dùng <code>nn.Embedding</code> thay one-hot, kèm token <code>&lt;PAD&gt;</code> và <code>&lt;UNK&gt;</code></td><td>RAM giảm khoảng 1000 lần, tổng quát hoá tốt hơn</td></tr>
+  <tr><td>4</td><td><code>pack_padded_sequence</code> hoặc pre-padding</td><td><code>h_n</code> không bị pha loãng bởi padding</td></tr>
+  <tr><td>5</td><td>Gradient clipping, Adam, lưu best checkpoint</td><td>Train ổn định hơn</td></tr>
+  <tr><td>6</td><td>Thêm Attention (Bahdanau/Luong)</td><td>Phá bottleneck khi câu trả lời dài</td></tr>
+  <tr><td>7</td><td>Production: dùng retrieval (embed câu hỏi rồi tìm câu gần nhất bằng cosine, trả về câu trả lời gốc) hoặc LLM + RAG + guardrails</td><td>Domain y tế không nên để model <em>tự sinh</em> nội dung lời khuyên</td></tr>
+</table></div>
+<p>Mục 7 nối tự nhiên sang phần so sánh "tự build và Bedrock" của Buổi 19. Đặt chatbot LSTM tự sinh câu trả lời cạnh một bản retrieval/RAG trả lời đúng nguyên văn FAQ sẽ cho học viên thấy rõ khác biệt.</p>
+
+</main>
+</body>
+</html>

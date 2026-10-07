@@ -6,6 +6,9 @@ Chatbot hỏi đáp về sức khoẻ tinh thần, dùng để so sánh với ch
 |---|---|
 | `app_todo.py` | Bài hands-on: học viên điền 6 TODO |
 | `app.py` | Đáp án hoàn chỉnh |
+| `lstm/Chatbot_using_LSTM_pytorch_hands_on.ipynb` | Bài hands-on chatbot LSTM: học viên điền các TODO (chạy trên Colab) |
+| `lstm/Chatbot_using_LSTM_pytorch.ipynb` | Đáp án notebook chatbot LSTM |
+| `lstm/Chatbot_LSTM_giai_thich.html` | Giải thích từng bước notebook LSTM, mở bằng trình duyệt |
 
 ## Chạy
 
